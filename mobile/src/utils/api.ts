@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 
 const BASE_URL = Platform.OS === 'web'
   ? 'http://localhost:8000/api'
-  : 'http://192.168.254.109:8000/api';
+  : 'http://192.168.18.9:8000/api';
 
 export const getToken = async () => {
   return await AsyncStorage.getItem("auth_token");

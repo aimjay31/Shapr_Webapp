@@ -1,0 +1,50 @@
+.dashboard {
+  padding: 20px;
+  color: #fff;
+}
+
+.dash-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.metric-card {
+  background: linear-gradient(135deg, #6A0DAD, #4B0082);
+  padding: 18px;
+  border-radius: 14px;
+  box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+}
+
+.metric-card h3 {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.metric-card p {
+  font-size: 22px;
+  font-weight: bold;
+  margin-top: 6px;
+}
+
+.ai-box {
+  margin-top: 25px;
+  padding: 18px;
+  border-radius: 12px;
+  background: rgba(106, 13, 173, 0.15);
+  border: 1px solid rgba(106, 13, 173, 0.3);
+}
+
+.ai-insight {
+  margin-top: 8px;
+  padding: 10px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 8px;
+}

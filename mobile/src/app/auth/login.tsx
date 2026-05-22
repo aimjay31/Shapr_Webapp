@@ -10,7 +10,7 @@ import { useTheme } from "@/context/ThemeContext";
 
 const BASE_URL = Platform.OS === 'web'
   ? 'http://localhost:8000'
-  : 'http://192.168.254.109:8000';
+  : 'http://192.168.18.9:8000';
 
 export default function Login() {
   const router = useRouter();

@@ -1,331 +1,315 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import "../styles/Dashboard.css";
 import TipsComponent from "../components/TipsComponent";
 import { useNightMode } from "../context/NightModeContext";
-import { useSession } from "../context/SessionContext";
-import { Line, Bar, Doughnut } from "react-chartjs-2";
-import {
-  Chart as ChartJS, CategoryScale, LinearScale, PointElement,
-  LineElement, BarElement, ArcElement, Tooltip, Legend,
-} from "chart.js";
 
-ChartJS.register(
-  CategoryScale, LinearScale, PointElement, LineElement,
-  BarElement, ArcElement, Tooltip, Legend
-);
+/* =======================
+   FETCH CONFIG
+======================= */
+
+const BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+const getToken = () => localStorage.getItem("access_token");
+
+/* =======================
+   NORMALIZE DATA
+======================= */
+
+const normalize = (s) => ({
+  date: s.date || s.created_at || "",
+  subject: s.subject || "General",
+  taskName: s.taskName || s.task_name || "",
+  duration: parseInt(s.duration || s.duration_minutes || 0),
+  mood: s.mood || "Neutral",
+  sleep: s.sleep || s.sleep_hours || 0,
+  result:
+    s.result ||
+    (s.productivity_rating >= 1 ? "Productive" : "Not Productive"),
+  period: s.period || "Morning",
+});
+
+/* ======================= */
 
 export default function Dashboard() {
   const { nightMode } = useNightMode();
-  const { sessions } = useSession(); 
+
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [showTips, setShowTips] = useState(true);
   const [timeFilter, setTimeFilter] = useState("All time");
 
-  /* ---------------- 1. MASTER FILTER LOGIC ---------------- */
-  // This now filters the data for the ENTIRE dashboard!
-  const filteredSessions = sessions.filter((s) => {
-    if (timeFilter === "All time") return true;
+  /* =======================
+     FETCH DATA
+  ======================= */
 
-    const sessionDate = new Date(s.date);
-    const today = new Date();
+  useEffect(() => {
+    const fetchSessions = async () => {
+      try {
+        setLoading(true);
+        setError("");
 
-    if (timeFilter === "Today") {
-      return sessionDate.toDateString() === today.toDateString();
+        const token = getToken();
+
+        const res = await fetch(
+          `${BASE_URL}/api/study_session/history/`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Token ${token}` } : {}),
+            },
+          }
+        );
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const raw = await res.json();
+
+        const list = Array.isArray(raw)
+          ? raw
+          : raw.results || raw.data || [];
+
+        setSessions(list.map(normalize));
+      } catch (err) {
+        console.error(err);
+        setError("Failed to load dashboard data.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSessions();
+  }, []);
+
+  /* =======================
+     FILTER
+  ======================= */
+
+  const filtered = useMemo(() => {
+    return sessions.filter((s) => {
+      if (timeFilter === "All time") return true;
+
+      const d = new Date(s.date);
+      const now = new Date();
+
+      if (timeFilter === "Today")
+        return d.toDateString() === now.toDateString();
+
+      if (timeFilter === "This week") {
+        const diff = Math.ceil((now - d) / 86400000);
+        return diff <= 7;
+      }
+
+      if (timeFilter === "This month") {
+        return (
+          d.getMonth() === now.getMonth() &&
+          d.getFullYear() === now.getFullYear()
+        );
+      }
+
+      return true;
+    });
+  }, [sessions, timeFilter]);
+
+  /* =======================
+     METRICS
+  ======================= */
+
+  const totalSessions = filtered.length;
+
+  const productive = filtered.filter(
+    (s) => s.result === "Productive"
+  ).length;
+
+  const productivityScore = totalSessions
+    ? Math.round((productive / totalSessions) * 100)
+    : 0;
+
+  const totalMinutes = filtered.reduce(
+    (a, s) => a + (s.duration || 0),
+    0
+  );
+
+  const avgMinutes = totalSessions
+    ? Math.round(totalMinutes / totalSessions)
+    : 0;
+
+  const avgHr = Math.floor(avgMinutes / 60);
+  const avgMin = avgMinutes % 60;
+
+  /* =======================
+     AI INSIGHTS
+  ======================= */
+
+  const aiInsights = useMemo(() => {
+    const insights = [];
+
+    if (totalSessions === 0) {
+      return ["📊 No study sessions yet. Start your first session to get insights."];
     }
-    
-    if (timeFilter === "This week") {
-      const diffTime = Math.abs(today - sessionDate);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      return diffDays <= 7;
+
+    if (productivityScore >= 80) {
+      insights.push("🔥 Excellent focus consistency.");
+    } else if (productivityScore >= 50) {
+      insights.push("📈 Moderate productivity level.");
+    } else {
+      insights.push("⚠️ Low productivity detected.");
     }
-    
-    if (timeFilter === "This month") {
-      return (
-        sessionDate.getMonth() === today.getMonth() &&
-        sessionDate.getFullYear() === today.getFullYear()
-      );
+
+    if (avgMinutes > 90) {
+      insights.push("⏱️ Try shorter focus sessions (25–50 mins).");
     }
-    return true;
-  });
 
-  /* ---------------- 2. DYNAMIC CALCULATIONS ---------------- */
-  // Notice how these all use 'filteredSessions' now instead of 'sessions'
-  
-  const total = filteredSessions.length;
-
-  const productiveSessions = filteredSessions.filter((s) => s.result === "Productive");
-  const productiveCount = productiveSessions.length;
-
-  // Confidence Score
-  const confidence = total ? Math.round((productiveCount / total) * 100) : 0;
-
-  // Average Study Duration
-  let totalMins = 0;
-  filteredSessions.forEach(s => {
-    const mins = parseInt(s.duration) || 0; 
-    totalMins += mins;
-  });
-  const avgTotalMins = total ? Math.round(totalMins / total) : 0;
-  const avgHr = Math.floor(avgTotalMins / 60);
-  const avgMin = avgTotalMins % 60;
-
-  // Best Study Time
-  const periodMap = {};
-  let bestTime = "No Data";
-  let maxPeriodCount = 0;
-
-  productiveSessions.forEach(s => {
-    const p = s.period || "Morning Hours"; 
-    periodMap[p] = (periodMap[p] || 0) + 1;
-    if (periodMap[p] > maxPeriodCount) {
-      maxPeriodCount = periodMap[p];
-      bestTime = p;
+    if (productive === 0) {
+      insights.push("❌ No productive sessions detected.");
     }
-  });
 
-  /* ---------------- 3. CHART SETUP & COLORS ---------------- */
+    return insights;
+  }, [productivityScore, avgMinutes, productive, totalSessions]);
 
-  const gridColor = nightMode ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.10)";
-  const tickColor = nightMode ? "#a78bfa" : "#6b57b9";
+  /* ======================= */
 
-  // LINE CHART
-  const labels = filteredSessions.map((_, i) => `S${i + 1}`);
-  const productiveData = filteredSessions.map((s) => s.result === "Productive" ? 1 : 0);
-  const notProductiveData = filteredSessions.map((s) => s.result !== "Productive" ? 1 : 0);
+  if (loading) {
+    return (
+      <div style={{ padding: 20 }}>
+        Loading dashboard...
+      </div>
+    );
+  }
 
-  const lineData = {
-    labels,
-    datasets: [
-      { label: "Productive", data: productiveData, borderColor: "#2FA84F", borderWidth: 2, pointRadius: 0, tension: 0.35 },
-      { label: "Not Productive", data: notProductiveData, borderColor: "#F07A1A", borderWidth: 2, pointRadius: 0, tension: 0.35 },
-    ],
+  if (error) {
+    return (
+      <div style={{ padding: 20, color: "red" }}>
+        {error}
+      </div>
+    );
+  }
+
+  /* =======================
+     STYLE HELPERS
+  ======================= */
+
+  const cardStyle = {
+    background: nightMode ? "#1a102b" : "#fff",
+    border: nightMode ? "1px solid #2d1b4d" : "1px solid #eee",
+    borderRadius: "16px",
+    padding: "18px",
+    boxShadow: nightMode
+      ? "none"
+      : "0 8px 20px rgba(0,0,0,0.05)",
   };
 
-  const lineOptions = {
-    responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 8, color: nightMode ? "#c0c0d0" : "#374151" } } },
-    scales: {
-      y: { min: 0, max: 1, ticks: { stepSize: 1, color: tickColor, font: { size: 11, weight: "700" } }, grid: { color: gridColor } },
-      x: { ticks: { color: tickColor, font: { size: 11, weight: "700" } }, grid: { display: false } },
-    },
+  const labelStyle = {
+    fontSize: "13px",
+    opacity: 0.7,
   };
 
-  // BAR CHART
-  const subjectMap = {};
-  filteredSessions.forEach((s) => {
-    const sub = s.subject || "General";
-    if (!subjectMap[sub]) subjectMap[sub] = 0;
-    subjectMap[sub] += s.result === "Productive" ? 1 : 0;
-  });
-
-  const barData = {
-    labels: Object.keys(subjectMap),
-    datasets: [{ label: "Productive Sessions", data: Object.values(subjectMap), backgroundColor: "#43C872", borderRadius: 8, barThickness: 30 }],
+  const valueStyle = {
+    fontSize: "26px",
+    fontWeight: "800",
+    marginTop: "8px",
   };
 
-  const barOptions = {
-    responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 8, color: nightMode ? "#c0c0d0" : "#374151" } } },
-    scales: {
-      y: { display: false, grid: { display: false } },
-      x: { ticks: { color: tickColor, font: { size: 11, weight: "700" } }, grid: { display: false } },
-    },
-  };
-
-  // DONUT CHART
-  const donutData = {
-    labels: ["Confidence", "Remaining"],
-    datasets: [{ data: [confidence, 100 - confidence], backgroundColor: ["#ffffff", "rgba(255,255,255,0.25)"], borderWidth: 0, cutout: "74%" }],
-  };
-
-  const donutOptions = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } } };
-
-  /* ---------------- 4. UI ---------------- */
+  /* =======================
+     UI
+  ======================= */
 
   return (
-    <div className={nightMode ? "night-mode" : ""}>
-      <div className="dashboard-with-button">
-        <h1 className="dash-h1">Dashboard</h1>
+    <div
+      style={{
+        padding: "24px",
+        maxWidth: "1200px",
+        margin: "0 auto",
+        color: nightMode ? "#fff" : "#000",
+      }}
+    >
+      {/* HEADER */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "20px",
+        }}
+      >
+        <h1 style={{ fontSize: "28px" }}>Dashboard</h1>
 
-        <button className="toggle-btn" onClick={() => setShowTips(!showTips)}>
+        <button
+          onClick={() => setShowTips(!showTips)}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "10px",
+            border: "none",
+            background: "#6A0DAD",
+            color: "#fff",
+            cursor: "pointer",
+          }}
+        >
           {showTips ? "Hide Tips" : "Show Tips"}
         </button>
       </div>
 
-      {/* TOP CARDS */}
-      <div className="dash-cards">
-        <div className="dash-card">
-          <div className="card-top">
-            <span className="card-ico purple"><IcoCalendar /></span>
-            <span className="card-title">Total Session</span>
-          </div>
-          <div className="card-value">{total}</div>
+      {/* METRIC BLOCKS */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "16px",
+        }}
+      >
+        <div style={cardStyle}>
+          <div style={labelStyle}>Total Sessions</div>
+          <div style={valueStyle}>{totalSessions}</div>
         </div>
 
-        <div className="dash-card">
-          <div className="card-top">
-            <span className="card-ico purple"><IcoCheck /></span>
-            <span className="card-title">Productive Sessions</span>
-          </div>
-          <div className="card-value">
-            {productiveCount} <span className="card-sub">Productive</span>
-          </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Productivity Score</div>
+          <div style={valueStyle}>{productivityScore}%</div>
         </div>
 
-        <div className="dash-card">
-          <div className="card-top">
-            <span className="card-ico purple"><IcoClock /></span>
-            <span className="card-title">Avg Study Duration</span>
-          </div>
-          <div className="card-value">
-            {avgHr}<span className="u">hr</span> {avgMin}<span className="u">min</span>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Average Duration</div>
+          <div style={valueStyle}>
+            {avgHr}h {avgMin}m
           </div>
         </div>
 
-        <div className="dash-card">
-          <div className="card-top">
-            <span className="card-ico purple"><IcoMoon /></span>
-            <span className="card-title">Best Study Time</span>
-          </div>
-          <div className="card-value small">{bestTime}</div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Productive Sessions</div>
+          <div style={valueStyle}>{productive}</div>
         </div>
       </div>
 
-      {/* GRID */}
-      <div className="dash-grid">
-        <div className="dash-left">
-          <div className="dash-panels-2">
-            <div className="panel">
-              <div className="panel-head">Productivity Over Time</div>
-              <div className="panel-body chart"><Line data={lineData} options={lineOptions} /></div>
-            </div>
+      {/* AI INSIGHTS */}
+      <div
+        style={{
+          marginTop: "24px",
+          padding: "18px",
+          borderRadius: "16px",
+          background: nightMode ? "#1a102b" : "#f8f5ff",
+        }}
+      >
+        <h2>🧠 AI Insights</h2>
 
-            <div className="panel">
-              <div className="panel-head">Productivity by Subject</div>
-              <div className="panel-body chart"><Bar data={barData} options={barOptions} /></div>
-            </div>
+        {aiInsights.map((i, idx) => (
+          <div
+            key={idx}
+            style={{
+              padding: "10px",
+              marginTop: "8px",
+              borderRadius: "10px",
+              background: nightMode ? "#24143d" : "#fff",
+            }}
+          >
+            {i}
           </div>
-
-          {/* DYNAMIC TABLE */}
-          <div className="panel tablepanel">
-            <div className="tablehead">
-              <div className="tabletitle">Recent Study Sessions</div>
-              
-              <div className="tablefilter" style={{ position: "relative", display: "flex", alignItems: "center", color: nightMode ? "#8b8fb8" : "#64748b", fontWeight: "700" }}>
-                <span className="filtericon" style={{ marginRight: "6px" }}>≡</span>
-                <select 
-                  value={timeFilter}
-                  onChange={(e) => setTimeFilter(e.target.value)}
-                  style={{
-                    appearance: "none", background: "transparent", border: "none", 
-                    color: "inherit", fontSize: "14px", fontWeight: "inherit", fontFamily: "inherit",
-                    cursor: "pointer", outline: "none", paddingRight: "16px"
-                  }}
-                >
-                  <option value="All time">All time</option>
-                  <option value="Today">Today</option>
-                  <option value="This week">This week</option>
-                  <option value="This month">This month</option>
-                </select>
-                <span className="filtercaret" style={{ position: "absolute", right: 0, pointerEvents: "none" }}>▾</span>
-              </div>
-            </div>
-
-            <div className="tablewrap">
-              <table className="table">
-                <thead style={{ borderBottom: nightMode ? "1px solid #4a3b8c" : "1px solid #7C5BD6" }}>
-                  <tr>
-                    {["DATE & TIME", "SUBJECT", "DURATION", "MOOD", "SLEEP (HRS)", "RESULT"].map((col) => (
-                      <th key={col} style={{ color: nightMode ? "#a78bfa" : "#7C5BD6", paddingBottom: "12px", fontSize: "12px", letterSpacing: "0.5px" }}>
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {filteredSessions.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" style={{ textAlign: "center", padding: "30px", color: nightMode ? "#8b8fb8" : "#94A3B8" }}>
-                        No sessions found for "{timeFilter}".
-                      </td>
-                    </tr>
-                  ) : (
-                    [...filteredSessions].reverse().slice(0, 5).map((s, i) => (
-                      <tr key={i} style={{ borderBottom: nightMode ? "1px solid #2a2a45" : "1px solid #f3f4f7" }}>
-                        <td style={{ padding: "16px 0" }}>
-                          <span style={{ color: nightMode ? "#e0e0f0" : "#1e293b" }}>{s.date}</span> <br/>
-                          <span style={{ fontSize: '0.85em', color: nightMode ? '#8b8fb8' : '#94A3B8' }}>{s.startTime}</span>
-                        </td>
-                        <td className="b" style={{ padding: "16px 0" }}>
-                          <span style={{ color: nightMode ? "#ffffff" : "#000000", fontWeight: "800" }}>{s.subject}</span> <br/>
-                          <span style={{ fontSize: '0.85em', color: nightMode ? '#a78bfa' : '#7C5BD6', fontWeight: "700" }}>{s.taskName}</span>
-                        </td>
-                        <td style={{ padding: "16px 0", color: nightMode ? "#e0e0f0" : "#475569" }}>{s.duration}</td>
-                        <td className="m" style={{ padding: "16px 0", color: nightMode ? "#e0e0f0" : "#1e293b", fontWeight: "700" }}>{s.mood}</td>
-                        <td style={{ padding: "16px 0", color: nightMode ? "#e0e0f0" : "#475569" }}>{s.sleep}</td>
-                        <td style={{ padding: "16px 0" }}>
-                          <span 
-                            style={{
-                              display: "inline-flex", alignItems: "center", gap: "6px",
-                              padding: "6px 12px", borderRadius: "999px", fontSize: "12px", fontWeight: "800",
-                              backgroundColor: s.result === "Productive" ? (nightMode ? "rgba(47,168,79,0.15)" : "#e6f4ea") : (nightMode ? "rgba(240,122,26,0.15)" : "#fce8d5"),
-                              color: s.result === "Productive" ? (nightMode ? "#4ade80" : "#2FA84F") : (nightMode ? "#fb923c" : "#F07A1A"),
-                            }}
-                          >
-                            {s.result} <span style={{ fontSize: "10px" }}>▾</span>
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        {/* RIGHT */}
-        <div className="dash-right">
-          <div className="panel predict">
-            <div className="predict-head">
-              <span className="predico"><IcoTrend /></span>
-              <span>Prediction Result</span>
-            </div>
-
-            <div className="predict-row">
-              <span className="miniCal"><IcoMiniCalendar /></span>
-              <span className="predtext">
-                Prediction Outcome : <b>{confidence >= 50 ? "Productive" : "Unproductive"}</b>
-              </span>
-            </div>
-
-            <div className="predict-sub">Confidence Score:</div>
-
-            <div className="ring">
-              <div className="ringChart">
-                <Doughnut data={donutData} options={donutOptions} />
-              </div>
-
-              <div className="ringCenter">
-                <div className="ringBig">{confidence}%</div>
-                <div className="ringSmall">CONFIDENCE</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="panel tips">
-            {showTips && <TipsComponent />}
-          </div>
-        </div>
+        ))}
       </div>
+
+      {/* TIPS */}
+      {showTips && <TipsComponent />}
     </div>
   );
 }
-
-/* ICONS */
-function IcoCalendar(){return(<svg viewBox="0 0 24 24" className="big"><path d="M7 2v3M17 2v3M4 8h16M6 5h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" strokeWidth="2"/></svg>);}
-function IcoCheck(){return(<svg viewBox="0 0 24 24" className="big"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" fill="none" stroke="currentColor" strokeWidth="2"/><path d="M22 4 12 14.01l-3-3" fill="none" stroke="currentColor" strokeWidth="2"/></svg>);}
-function IcoClock(){return(<svg viewBox="0 0 24 24" className="big"><path d="M12 22a10 10 0 1 1 10-10 10 10 0 0 1-10 10Z" fill="none" stroke="currentColor" strokeWidth="2"/><path d="M12 6v6l4 2" fill="none" stroke="currentColor" strokeWidth="2"/></svg>);}
-function IcoMoon(){return(<svg viewBox="0 0 24 24" className="big"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8Z" fill="none" stroke="currentColor" strokeWidth="2"/></svg>);}
-function IcoTrend(){return(<svg viewBox="0 0 24 24" className="mini"><path d="M4 16l6-6 4 4 6-8" fill="none" stroke="currentColor" strokeWidth="2"/></svg>);}
-function IcoMiniCalendar(){return(<svg viewBox="0 0 24 24" className="mini purple"><path d="M7 2v2M17 2v2M4 7h16" fill="none" stroke="currentColor" strokeWidth="2"/></svg>);}

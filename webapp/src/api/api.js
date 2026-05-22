@@ -1,4 +1,4 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://192.168.254.109:8000";
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 export const getToken   = () => localStorage.getItem("access_token");
 export const setToken   = (t) => localStorage.setItem("access_token", t);
 export const clearToken = () => {
